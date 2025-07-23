@@ -116,8 +116,13 @@ def run_bottom_loop():
         try:
             markets = bitvavo.markets()
             symbols = [m['market'] for m in markets if m['quote'] == 'EUR' and m['status'] == 'trading']
+            
             for symbol in symbols:
                 score = breakout_score(symbol)
+
+                # ✅ طباعة السكور للتجريب
+                debug(f"[BOTTOM] {symbol} → score = {score}")
+
                 if score >= 3:
                     key = f"bottom:{symbol}"
                     if not r.exists(key):
@@ -127,8 +132,10 @@ def run_bottom_loop():
                         }))
                         debug(f"🔮 Bottom Signal: {symbol}")
                 time.sleep(0.3)
+                
         except Exception as e:
             debug(f"Bottom Error: {e}")
+        
         time.sleep(60)
 
 # ========== تنظيف العملات المنتهية ==========
