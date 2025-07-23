@@ -33,9 +33,10 @@ def send_message(text):
 
 def send_to_toto(symbol):
     try:
-        requests.post(TOTO_WEBHOOK, json={"message": {"text": f"اشتري {symbol} يا كوكو"}})
-    except:
-        pass
+        base = symbol.split("-")[0]
+        requests.post(TOTO_WEBHOOK, json={"message": {"text": f"اشتري {base} يا توتو"}})
+    except Exception as e:
+        print(f"[Toto Webhook Error] {e}")
 
 # ========== Ridder Scoring ==========
 def ridder_score(symbol):
