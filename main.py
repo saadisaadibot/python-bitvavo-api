@@ -1,45 +1,39 @@
 import os
-import requests
 from flask import Flask
 from python_bitvavo_api.bitvavo import Bitvavo
 
-# إعداد التوكن والتشات ID من متغيرات البيئة
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-
-# إرسال رسالة تيليغرام
-def send_message(text):
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        data = {"chat_id": CHAT_ID, "text": text}
-        response = requests.post(url, data=data)
-        print(f"Telegram Response: {response.text}")
-    except Exception as e:
-        print("Telegram Error:", str(e))
-
-# تجربة مكتبة Bitvavo
-def test_bitvavo():
-    try:
-        bitvavo = Bitvavo({
-            'APIKEY': os.getenv("BITVAVO_API_KEY"),
-            'APISECRET': os.getenv("BITVAVO_API_SECRET"),
-            'RESTURL': 'https://api.bitvavo.com/v2'
-        })
-        markets = bitvavo.markets({})
-        print("Bitvavo Connection OK ✅")
-        send_message("✅ تم الاتصال مع Bitvavo بنجاح.")
-    except Exception as e:
-        print("Bitvavo Error:", str(e))
-        send_message(f"❌ خطأ في Bitvavo:\n{str(e)}")
-
-# Flask App لتشغيل البوت
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "Bot Running!"
+# إعداد المفاتيح من environment
+bitvavo = Bitvavo({
+  'APIKEY': os.getenv("BITVAVO_API_KEY"),
+  'APISECRET': os.getenv("BITVAVO_API_SECRET"),
+  'RESTURL': 'https://api.bitvavo.com/v2',
+  'WSURL': 'wss://ws.bitvavo.com/v2/'
+})
 
-if __name__ == "__main__":
-    send_message("🚀 بوت كوكو بدأ التشغيل.")
-    test_bitvavo()
-    app.run(host="0.0.0.0", port=8080)
+@app.route('/')
+def get_candle():
+    try:
+        # طلب شمعة واحدة 1m لزوج ADA-EUR
+        candles = bitvavo.candles("ADA-EUR", "1m", {"limit": 1})
+        if candles:
+            candle = candles[0]
+            return f"""
+                <h3>شمعة ADA-EUR</h3>
+                <ul>
+                    <li>الوقت: {candle[0]}</li>
+                    <li>الفتح: {candle[1]}</li>
+                    <li>الأعلى: {candle[2]}</li>
+                    <li>الأدنى: {candle[3]}</li>
+                    <li>الإغلاق: {candle[4]}</li>
+                    <li>الحجم: {candle[5]}</li>
+                </ul>
+            """
+        else:
+            return "لم يتم استرجاع أي شموع"
+    except Exception as e:
+        return f"خطأ أثناء جلب الشمعة: {str(e)}"
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080)
