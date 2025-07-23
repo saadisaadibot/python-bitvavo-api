@@ -21,9 +21,6 @@ bitvavo = Bitvavo({
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TOUTO_CHAT_ID = os.getenv("CHAT_ID")
 
-def debug(msg):
-    print(f"[DEBUG] {msg}")
-
 def send_message(text):
     requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
         "chat_id": TOUTO_CHAT_ID,
@@ -66,7 +63,7 @@ def breakout_score(symbol):
 
 # ========== Ridder Mode ==========
 def run_ridder_loop():
-    time.sleep(60)  # تأخير دقيقة لتجنب الإشعارات الوهمية
+    time.sleep(180)  # ⏱️ الانتظار 3 دقائق قبل البدء
     while True:
         try:
             markets = bitvavo.markets()
@@ -78,10 +75,8 @@ def run_ridder_loop():
                     scored.append((s, score))
                 time.sleep(0.12)
             top30 = sorted(scored, key=lambda x: x[1], reverse=True)[:30]
-
             for key in r.scan_iter("ridder:*"):
                 r.delete(key)
-
             for symbol, _ in top30:
                 r.set(f"ridder:{symbol}", json.dumps({
                     "start": time.time(),
@@ -89,7 +84,7 @@ def run_ridder_loop():
                     "notified": False
                 }))
         except Exception as e:
-            debug(f"خطأ في جمع Ridder: {e}")
+            print(f"[Ridder Error] {e}")
         time.sleep(1800)
 
 def check_ridder_triggers():
@@ -108,12 +103,11 @@ def check_ridder_triggers():
                 volume = float(candles[-1][5])
                 change = (close - open_) / open_ * 100
                 if change > 2.0 and close > open_ and volume > 0:
-                    debug(f"🚨 Ridder Trigger: {symbol} ✅")
                     data["notified"] = True
                     r.set(key, json.dumps(data))
                     send_message(f"✅ Ridder اشتري {symbol} يا توتو 🚨")
             except Exception as e:
-                debug(f"Ridder Trigger Error {symbol}: {e}")
+                print(f"[Ridder Trigger Error] {e}")
         time.sleep(20)
 
 # ========== Bottom Mode ==========
@@ -122,41 +116,27 @@ def run_bottom_loop():
         try:
             markets = bitvavo.markets()
             symbols = [m['market'] for m in markets if m['quote'] == 'EUR' and m['status'] == 'trading']
-
             scored = []
             for symbol in symbols:
                 if r.exists(f"bottom_ignore:{symbol}"):
                     continue
-
-                try:
-                    stats = bitvavo.ticker24h(symbol)
-                    volume = float(stats.get('volume', 0))
-                    if volume < 500:
-                        r.set(f"bottom_ignore:{symbol}", 1)
-                        continue
-                except:
-                    continue
-
                 score = breakout_score(symbol)
                 if score == 0:
                     r.set(f"bottom_ignore:{symbol}", 1)
                     continue
-
                 scored.append((symbol, score))
-                time.sleep(0.2)
-
-            top25 = sorted(scored, key=lambda x: x[1], reverse=True)[:25]
-            for symbol, _ in top25:
-                key = f"bottom:{symbol}"
+                time.sleep(0.1)
+            top25 = sorted([s for s in scored if s[1] >= 2], key=lambda x: -x[1])[:25]
+            for s, _ in top25:
+                key = f"bottom:{s}"
                 if not r.exists(key):
                     r.set(key, json.dumps({
                         "start": time.time(),
                         "expires": time.time() + 1800,
                         "notified": False
                     }))
-                    debug(f"🔮 Bottom Monitoring: {symbol}")
         except Exception as e:
-            debug(f"Bottom Error: {e}")
+            print(f"[Bottom Error] {e}")
         time.sleep(600)
 
 def check_bottom_triggers():
@@ -175,15 +155,14 @@ def check_bottom_triggers():
                 volume = float(candles[-1][5])
                 change = (close - open_) / open_ * 100
                 if change > 1.5 and close > open_ and volume > 0:
-                    debug(f"✅ Bottom Trigger: {symbol} (change={change:.2f}%)")
                     data["notified"] = True
                     r.set(key, json.dumps(data))
                     send_message(f"✅ Bottom اشترِ {symbol} يا توتو 🔮")
             except Exception as e:
-                debug(f"Bottom Trigger Error {symbol}: {e}")
+                print(f"[Bottom Trigger Error] {e}")
         time.sleep(20)
 
-# ========== تنظيف العملات المنتهية ==========
+# ========== التنظيف ==========
 def cleanup_expired():
     while True:
         for key in r.scan_iter("*:*"):
@@ -195,7 +174,7 @@ def cleanup_expired():
                 continue
         time.sleep(60)
 
-# ========== Webhook ==========
+# ========== تيليغرام ==========
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.json
@@ -204,6 +183,7 @@ def webhook():
     if msg == "شو عم تعمل" and chat_id == str(TOUTO_CHAT_ID):
         ridder = [k.decode().split(":")[1] for k in r.scan_iter("ridder:*")]
         bottom = [k.decode().split(":")[1] for k in r.scan_iter("bottom:*")]
+
         now = datetime.now()
         remaining = (30 - (now.minute % 30)) % 30
         symbol = f"-{remaining}"
