@@ -1,101 +1,84 @@
 import os
+import time
 import redis
 import requests
 from flask import Flask, request
-from bitvavo_client.bitvavo import Bitvavo
 from threading import Thread
-from datetime import datetime
+from python_bitvavo_api.bitvavo import Bitvavo  # ✅ هذا التعديل الأساسي
 
-# إعداد Flask
-app = Flask(__name__)
-
-# المتغيرات البيئية
-BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY")
-BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET")
+# إعداد المفاتيح من المتغيرات البيئية
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 REDIS_URL = os.getenv("REDIS_URL")
+BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY")
+BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET")
 
-# Redis
+# إعداد الاتصال بـ Redis و Flask و Bitvavo
 r = redis.from_url(REDIS_URL)
+app = Flask(__name__)
+bitvavo = Bitvavo({ 'APIKEY': BITVAVO_API_KEY, 'APISECRET': BITVAVO_API_SECRET })
 
-# تهيئة Bitvavo
-bitvavo = Bitvavo({
-    'APIKEY': BITVAVO_API_KEY,
-    'APISECRET': BITVAVO_API_SECRET
-})
+# إرسال إشعار Telegram
+def send_message(text):
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        data={"chat_id": CHAT_ID, "text": text}
+    )
 
-# إرسال رسالة Telegram
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
-
-# حساب سكور عملة بناءً على آخر 3 شموع
-def calculate_score(candles):
-    try:
-        total_change = 0
-        total_range = 0
-        total_volume = 0
-        for c in candles[-3:]:
-            open_, high, low, close, volume = map(float, c[1:6])
-            total_change += (close - open_) / open_
-            total_range += (high - low) / open_
-            total_volume += volume
-        return (total_change * 100) + total_range + (total_volume / 10000)
-    except:
-        return -999
-
-# جمع أفضل 25 عملة بناء على الشموع
+# جلب وتحليل العملات
 def get_top_25():
     try:
-        all_markets = bitvavo.markets()
-        scores = []
-        for market in all_markets:
-            symbol = market['market']
-            if not symbol.endswith('-EUR'):
-                continue
+        markets = bitvavo.markets()
+        tickers = bitvavo.ticker24h()
+
+        active_eur = [m['market'] for m in markets if m['status'] == 'trading' and m['quote'] == 'EUR']
+        filtered = [t for t in tickers if t['market'] in active_eur]
+
+        for t in filtered:
             try:
-                candles = bitvavo.candles(symbol, '1m', limit=3)
-                if len(candles) >= 3:
-                    score = calculate_score(candles)
-                    scores.append((symbol, score))
+                t['change'] = float(t['priceChangePercentage'])
             except:
-                continue
-        scores.sort(key=lambda x: x[1], reverse=True)
-        return [s[0] for s in scores[:25]]
+                t['change'] = -999
+
+        top = sorted(filtered, key=lambda x: x['change'], reverse=True)[:25]
+        r.set("top25", ','.join([t['market'] for t in top]))
+        return True
+
     except Exception as e:
-        send_telegram(f"حدث خطأ أثناء جمع العملات: {str(e)}")
-        return []
+        send_message(f"❌ فشل جلب العملات: {e}")
+        return False
 
-# بدء مراقبة العملات
-def monitor_coins():
-    r.flushdb()
-    r.set("state", "عم اشرب متي 🧉")
-    send_telegram("🚀 KOKO بدأ العمل واختيار أفضل 25 عملة للمراقبة...")
-    top_coins = get_top_25()
-    for coin in top_coins:
-        r.set(f"watch:{coin}", datetime.now().isoformat())
-    send_telegram("✅ تم اختيار ومراقبة أفضل 25 عملة.")
-    r.set("state", "🚨 تحت المراقبة: " + ", ".join(top_coins))
+# مسار Webhook
+@app.route("/", methods=["POST"])
+def webhook():
+    data = request.json
+    msg = data.get("message", {}).get("text", "")
+    chat_id = data.get("message", {}).get("chat", {}).get("id", "")
 
-# أمر شو عم تعمل
-@app.route('/', methods=["POST"])
-def handle_msg():
-    data = request.get_json()
-    if "message" in data:
-        text = data["message"].get("text", "")
-        if text.strip() == "شو عم تعمل":
-            state = r.get("state")
-            if state:
-                return state.decode()
-            else:
-                return "مافي شي حالياً"
-    return "جاهز"
+    if str(chat_id) != CHAT_ID:
+        return "unauthorized"
 
-# تشغيل الخدمة
-def start():
-    Thread(target=monitor_coins).start()
+    if msg.strip().lower() == "شو عم تعمل":
+        coins = r.get("top25")
+        if coins:
+            coins = coins.decode().split(",")
+            text = "👀 العملات تحت المراقبة:\n" + "\n".join(coins)
+        else:
+            text = "🚫 لا توجد عملات تحت المراقبة حالياً"
+        send_message(text)
 
-if __name__ == '__main__':
-    start()
-    app.run(host='0.0.0.0', port=8080)
+    return "ok"
+
+# بدء المهمة عند التشغيل
+def start_analysis():
+    r.delete("top25")
+    ok = get_top_25()
+    if ok:
+        send_message("✅ تم اختيار أعلى 25 عملة للمراقبة.")
+    else:
+        send_message("❌ فشل في تحليل العملات.")
+
+# تشغيل كل شيء
+if __name__ == "__main__":
+    Thread(target=start_analysis).start()
+    app.run(host="0.0.0.0", port=8080)
