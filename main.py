@@ -1,41 +1,39 @@
 import os
-import sys
 import requests
-from flask import Flask
+from flask import Flask, request
 
-# أضف مجلد المكتبة لمسار الاستيراد
-sys.path.append("python_bitvavo_api")
-from bitvavo import Bitvavo
-
-app = Flask(__name__)
-
-BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY")
-BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET")
+# إعداد المفاتيح من Railway
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-bitvavo = Bitvavo({
-    'APIKEY': BITVAVO_API_KEY,
-    'APISECRET': BITVAVO_API_SECRET,
-    'RESTURL': 'https://api.bitvavo.com/v2',
-    'WSURL': 'wss://ws.bitvavo.com/v2/'
-})
+# إعداد Flask
+app = Flask(__name__)
 
+# دالة إرسال رسالة تيليغرام
 def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": text})
-
-@app.route("/")
-def fetch_and_notify():
+    data = {"chat_id": CHAT_ID, "text": text}
     try:
-        result = {}
-        for symbol in ["ADA-EUR", "BTC-EUR", "ETH-EUR"]:
-            candles = bitvavo.candles(symbol, '1m', {'limit': 3})
-            result[symbol] = candles
-        send_telegram_message("✅ تم جلب 3 شموع لكل عملة بنجاح!")
-        return str(result)
+        requests.post(url, data=data)
     except Exception as e:
-        send_telegram_message(f"❌ حدث خطأ أثناء جلب الشموع: {str(e)}")
-        return f"Error: {str(e)}"
+        print(f"خطأ في إرسال الرسالة: {e}")
 
-app.run(host="0.0.0.0", port=8080)
+# إرسال إشعار عند بدء التشغيل
+send_telegram_message("✅ السكربت اشتغل تمام")
+
+# راوت استقبال الرسائل من تيليغرام
+@app.route('/', methods=['POST'])
+def webhook():
+    data = request.get_json()
+    if data and "message" in data:
+        text = data["message"].get("text", "").strip()
+        chat_id = str(data["message"]["chat"]["id"])
+
+        if text == "شو عم تعمل" and chat_id == CHAT_ID:
+            send_telegram_message("عم اشرب متي 😎")
+
+    return {"ok": True}
+
+# تشغيل السيرفر
+if __name__ == '__main__':
+    app.run(debug=False, host='0.0.0.0', port=8080)
