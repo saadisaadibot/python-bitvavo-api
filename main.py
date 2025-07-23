@@ -5,7 +5,7 @@ import redis
 import threading
 import requests
 from flask import Flask, request
-from python_bitvavo_api.bitvavo import Bitvavo
+from python_bitvavo_api.bitvavo import Bitvavo  # حسب مجلدك
 
 # --- إعداد ---
 app = Flask(__name__)
@@ -19,31 +19,29 @@ bitvavo = Bitvavo({
 TOUTO_CHAT_ID = os.getenv("CHAT_ID")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# --- إرسال إشعار لتوتو ---
 def send_to_touto(text):
     requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
         "chat_id": TOUTO_CHAT_ID,
         "text": text
     })
 
-# --- حذف كل شي ---
 def reset_memory():
     for key in r.scan_iter("*"):
         r.delete(key)
 
-# --- تجميع رموز السوق كل 5 د ---
-global_usdt_symbols = []
+# --- جمع السوق الأوروبي كل 5 د ---
+global_eur_symbols = []
 
 def update_symbols_loop():
-    global global_usdt_symbols
+    global global_eur_symbols
     while True:
         try:
             markets = bitvavo.markets()
-            global_usdt_symbols = [m['market'] for m in markets if m['quote'] == 'USDT' and m['status'] == 'trading']
+            global_eur_symbols = [m['market'] for m in markets if m['quote'] == 'EUR' and m['status'] == 'trading']
         except: pass
-        time.sleep(300)  # كل 5 دقايق
+        time.sleep(300)
 
-# --- Ridder Score ---
+# --- سكور Ridder ---
 def ridder_score(symbol):
     try:
         candles = bitvavo.candles(symbol, '1m', { 'limit': 3 })
@@ -56,7 +54,7 @@ def ridder_score(symbol):
     except:
         return 0
 
-# --- Bottom Breakout Score ---
+# --- سكور Breakout ---
 def breakout_score(symbol):
     try:
         candles = bitvavo.candles(symbol, '1h', { 'limit': 30 })
@@ -70,21 +68,18 @@ def breakout_score(symbol):
         max_high = max(highs)
         avg_volume = sum(volumes) / len(volumes)
         score = 0
-        if last_close > max_high:
-            score += 1
-        if last_volume > avg_volume * 2:
-            score += 1
-        if last_close > float(last[1]):
-            score += 1
+        if last_close > max_high: score += 1
+        if last_volume > avg_volume * 2: score += 1
+        if last_close > float(last[1]): score += 1
         return score
     except:
         return 0
 
-# --- Ridder Worker ---
+# --- Ridder Mode ---
 def run_ridder_mode():
     while True:
         scored = []
-        for s in global_usdt_symbols:
+        for s in global_eur_symbols:
             score = ridder_score(s)
             if score:
                 scored.append((s, score))
@@ -93,14 +88,14 @@ def run_ridder_mode():
         for symbol, _ in top25:
             key = f"ridder:{symbol}"
             if not r.exists(key):
-                r.set(key, json.dumps({"start": time.time(), "expires": time.time() + 1800}))  # 30 دقيقة
+                r.set(key, json.dumps({"start": time.time(), "expires": time.time() + 1800}))
         check_ridder_triggers()
         time.sleep(60)
 
-# --- Bottom Worker ---
+# --- Bottom Mode ---
 def run_bottom_mode():
     while True:
-        for symbol in global_usdt_symbols:
+        for symbol in global_eur_symbols:
             score = breakout_score(symbol)
             if score >= 3:
                 key = f"bottom:{symbol}"
@@ -110,7 +105,6 @@ def run_bottom_mode():
             time.sleep(0.2)
         time.sleep(60)
 
-# --- Check Ridder انفجار ---
 def check_ridder_triggers():
     for key in r.scan_iter("ridder:*"):
         symbol = key.decode().split(":")[1]
@@ -125,7 +119,6 @@ def check_ridder_triggers():
         except:
             continue
 
-# --- تنظيف العملات المنتهية ---
 def cleanup_expired():
     while True:
         for key in r.scan_iter("*:*"):
@@ -136,7 +129,6 @@ def cleanup_expired():
             except: continue
         time.sleep(60)
 
-# --- رد "شو عم تعمل" ---
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.json
@@ -152,7 +144,6 @@ def webhook():
         send_to_touto(msg)
     return "ok"
 
-# --- التشغيل النهائي ---
 if __name__ == "__main__":
     reset_memory()
     threading.Thread(target=update_symbols_loop).start()
