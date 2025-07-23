@@ -4,6 +4,7 @@ import time
 import redis
 import threading
 import requests
+from datetime import datetime
 from flask import Flask, request
 from python_bitvavo_api.bitvavo import Bitvavo
 
@@ -26,7 +27,7 @@ def debug(msg):
 # ========== Ridder Scoring ==========
 def ridder_score(symbol):
     try:
-        candles = bitvavo.candles(symbol, '1m', { 'limit': 3 })
+        candles = bitvavo.candles(symbol, '1m', {'limit': 3})
         if len(candles) < 3:
             return 0
         change = (float(candles[-1][4]) - float(candles[0][1])) / float(candles[0][1]) * 100
@@ -39,7 +40,7 @@ def ridder_score(symbol):
 # ========== Breakout Scoring ==========
 def breakout_score(symbol):
     try:
-        candles = bitvavo.candles(symbol, '1h', { 'limit': 30 })
+        candles = bitvavo.candles(symbol, '1h', {'limit': 30})
         if len(candles) < 30:
             return 0
         highs = [float(c[2]) for c in candles[:-1]]
@@ -94,7 +95,7 @@ def check_ridder_triggers():
                 data = json.loads(r.get(key))
                 if data.get("notified"):
                     continue
-                candles = bitvavo.candles(symbol, '1m', { 'limit': 2 })
+                candles = bitvavo.candles(symbol, '1m', {'limit': 2})
                 if len(candles) < 2:
                     continue
                 open_ = float(candles[0][1])
@@ -105,6 +106,8 @@ def check_ridder_triggers():
                     debug(f"🚨 Ridder Trigger: {symbol} ✅ (change={change:.2f}%)")
                     data["notified"] = True
                     r.set(key, json.dumps(data))
+                    # إشعار تيليغرام
+                    send_message(f"🚨 اشتري {symbol} يا توتو  Ridder ✅")
             except Exception as e:
                 debug(f"خطأ في Ridder Trigger {symbol}: {e}")
         time.sleep(20)
@@ -134,12 +137,13 @@ def run_bottom_loop():
                             "expires": time.time() + 1800
                         }))
                         debug(f"🔮 Bottom Signal: {symbol}")
+                        send_message(f"🔮 اشتري {symbol} يا توتو  Bottom ✅")
                 time.sleep(0.3)
 
         except Exception as e:
             debug(f"Bottom Error: {e}")
 
-        time.sleep(600)  # كل 10 دقائق
+        time.sleep(600)
 
 # ========== تنظيف العملات المنتهية ==========
 def cleanup_expired():
@@ -153,6 +157,13 @@ def cleanup_expired():
                 continue
         time.sleep(60)
 
+# ========== إرسال رسالة تيليغرام ==========
+def send_message(text):
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
+        "chat_id": TOUTO_CHAT_ID,
+        "text": text
+    })
+
 # ========== Webhook تيليغرام ==========
 @app.route("/", methods=["POST"])
 def webhook():
@@ -162,14 +173,19 @@ def webhook():
     if msg == "شو عم تعمل" and chat_id == str(TOUTO_CHAT_ID):
         ridder = [k.decode().split(":")[1] for k in r.scan_iter("ridder:*")]
         bottom = [k.decode().split(":")[1] for k in r.scan_iter("bottom:*")]
-        reply = "🚨 العملات تحت المراقبة (Ridder):\n"
+
+        # حساب الوقت المتبقي لـ Ridder
+        now = datetime.now()
+        minute = now.minute
+        remaining = (30 - (minute % 30)) % 30
+        symbol = f"-{remaining}"
+
+        reply = f"🚨 العملات تحت المراقبة (Ridder) {symbol}:\n"
         reply += "\n".join(f"• {s}" for s in ridder) if ridder else "لا شي حالياً"
         reply += "\n\n🔮 مرشحة للانفجار (Bottom):\n"
         reply += "\n".join(f"• {s}" for s in bottom) if bottom else "لا شي حالياً"
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
-            "chat_id": chat_id,
-            "text": reply
-        })
+
+        send_message(reply)
     return "ok"
 
 # ========== التشغيل ==========
