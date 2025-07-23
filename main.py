@@ -5,7 +5,7 @@ import redis
 import threading
 import requests
 from flask import Flask, request
-from bitvavo_client.bitvavo import Bitvavo
+from python_bitvavo_api.bitvavo import Bitvavo
 
 # --- إعداد ---
 app = Flask(__name__)
