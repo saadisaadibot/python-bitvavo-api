@@ -66,7 +66,7 @@ def breakout_score(symbol):
 
 # ========== Ridder Mode ==========
 def run_ridder_loop():
-    time.sleep(60)  # ⏳ تأخير دقيقة قبل البدء
+    time.sleep(60)  # تأخير دقيقة لتجنب الإشعارات الوهمية
     while True:
         try:
             markets = bitvavo.markets()
@@ -92,7 +92,6 @@ def run_ridder_loop():
             debug(f"خطأ في جمع Ridder: {e}")
         time.sleep(1800)
 
-# ========== Ridder Trigger ==========
 def check_ridder_triggers():
     while True:
         for key in r.scan_iter("ridder:*"):
@@ -109,12 +108,12 @@ def check_ridder_triggers():
                 volume = float(candles[-1][5])
                 change = (close - open_) / open_ * 100
                 if change > 2.0 and close > open_ and volume > 0:
-                    debug(f"🚨 Ridder Trigger: {symbol} ✅ (change={change:.2f}%)")
+                    debug(f"🚨 Ridder Trigger: {symbol} ✅")
                     data["notified"] = True
                     r.set(key, json.dumps(data))
-                    send_message(f"🚨 اشتري {symbol} يا توتو  Ridder ✅")
+                    send_message(f"✅ Ridder اشتري {symbol} يا توتو 🚨")
             except Exception as e:
-                debug(f"خطأ في Ridder Trigger {symbol}: {e}")
+                debug(f"Ridder Trigger Error {symbol}: {e}")
         time.sleep(20)
 
 # ========== Bottom Mode ==========
@@ -123,17 +122,31 @@ def run_bottom_loop():
         try:
             markets = bitvavo.markets()
             symbols = [m['market'] for m in markets if m['quote'] == 'EUR' and m['status'] == 'trading']
+
             scored = []
             for symbol in symbols:
+                if r.exists(f"bottom_ignore:{symbol}"):
+                    continue
+
+                try:
+                    stats = bitvavo.ticker24h(symbol)
+                    volume = float(stats.get('volume', 0))
+                    if volume < 500:
+                        r.set(f"bottom_ignore:{symbol}", 1)
+                        continue
+                except:
+                    continue
+
                 score = breakout_score(symbol)
                 if score == 0:
+                    r.set(f"bottom_ignore:{symbol}", 1)
                     continue
+
                 scored.append((symbol, score))
-                time.sleep(0.3)
+                time.sleep(0.2)
 
             top25 = sorted(scored, key=lambda x: x[1], reverse=True)[:25]
-
-            for symbol, score in top25:
+            for symbol, _ in top25:
                 key = f"bottom:{symbol}"
                 if not r.exists(key):
                     r.set(key, json.dumps({
@@ -146,7 +159,6 @@ def run_bottom_loop():
             debug(f"Bottom Error: {e}")
         time.sleep(600)
 
-# ========== Bottom Trigger ==========
 def check_bottom_triggers():
     while True:
         for key in r.scan_iter("bottom:*"):
@@ -194,9 +206,9 @@ def webhook():
         bottom = [k.decode().split(":")[1] for k in r.scan_iter("bottom:*")]
         now = datetime.now()
         remaining = (30 - (now.minute % 30)) % 30
-        countdown = f"-{remaining}"
+        symbol = f"-{remaining}"
 
-        reply = f"🚨 العملات تحت المراقبة (Ridder) {countdown}:\n"
+        reply = f"🚨 العملات تحت المراقبة (Ridder) {symbol}:\n"
         reply += "\n".join(f"• {s}" for s in ridder) if ridder else "لا شي حالياً"
         reply += "\n\n🔮 مرشحة للانفجار (Bottom):\n"
         reply += "\n".join(f"• {s}" for s in bottom) if bottom else "لا شي حالياً"
