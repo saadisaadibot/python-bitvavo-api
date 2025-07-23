@@ -24,6 +24,12 @@ TOUTO_CHAT_ID = os.getenv("CHAT_ID")
 def debug(msg):
     print(f"[DEBUG] {msg}")
 
+def send_message(text):
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
+        "chat_id": TOUTO_CHAT_ID,
+        "text": text
+    })
+
 # ========== Ridder Scoring ==========
 def ridder_score(symbol):
     try:
@@ -83,10 +89,9 @@ def run_ridder_loop():
                 }))
         except Exception as e:
             debug(f"خطأ في جمع Ridder: {e}")
-
         time.sleep(1800)
 
-# ========== Ridder Trigger Check ==========
+# ========== Ridder Trigger ==========
 def check_ridder_triggers():
     while True:
         for key in r.scan_iter("ridder:*"):
@@ -106,7 +111,6 @@ def check_ridder_triggers():
                     debug(f"🚨 Ridder Trigger: {symbol} ✅ (change={change:.2f}%)")
                     data["notified"] = True
                     r.set(key, json.dumps(data))
-                    # إشعار تيليغرام
                     send_message(f"🚨 اشتري {symbol} يا توتو  Ridder ✅")
             except Exception as e:
                 debug(f"خطأ في Ridder Trigger {symbol}: {e}")
@@ -139,10 +143,8 @@ def run_bottom_loop():
                         debug(f"🔮 Bottom Signal: {symbol}")
                         send_message(f"🔮 اشتري {symbol} يا توتو  Bottom ✅")
                 time.sleep(0.3)
-
         except Exception as e:
             debug(f"Bottom Error: {e}")
-
         time.sleep(600)
 
 # ========== تنظيف العملات المنتهية ==========
@@ -157,13 +159,6 @@ def cleanup_expired():
                 continue
         time.sleep(60)
 
-# ========== إرسال رسالة تيليغرام ==========
-def send_message(text):
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
-        "chat_id": TOUTO_CHAT_ID,
-        "text": text
-    })
-
 # ========== Webhook تيليغرام ==========
 @app.route("/", methods=["POST"])
 def webhook():
@@ -174,17 +169,14 @@ def webhook():
         ridder = [k.decode().split(":")[1] for k in r.scan_iter("ridder:*")]
         bottom = [k.decode().split(":")[1] for k in r.scan_iter("bottom:*")]
 
-        # حساب الوقت المتبقي لـ Ridder
         now = datetime.now()
-        minute = now.minute
-        remaining = (30 - (minute % 30)) % 30
+        remaining = (30 - (now.minute % 30)) % 30
         symbol = f"-{remaining}"
 
         reply = f"🚨 العملات تحت المراقبة (Ridder) {symbol}:\n"
         reply += "\n".join(f"• {s}" for s in ridder) if ridder else "لا شي حالياً"
         reply += "\n\n🔮 مرشحة للانفجار (Bottom):\n"
         reply += "\n".join(f"• {s}" for s in bottom) if bottom else "لا شي حالياً"
-
         send_message(reply)
     return "ok"
 
