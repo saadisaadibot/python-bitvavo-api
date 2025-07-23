@@ -1,84 +1,162 @@
 import os
+import json
 import time
 import redis
+import threading
 import requests
 from flask import Flask, request
-from threading import Thread
-from python_bitvavo_api.bitvavo import Bitvavo  # ✅ هذا التعديل الأساسي
+from bitvavo_client.bitvavo import Bitvavo
 
-# إعداد المفاتيح من المتغيرات البيئية
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-REDIS_URL = os.getenv("REDIS_URL")
-BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY")
-BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET")
-
-# إعداد الاتصال بـ Redis و Flask و Bitvavo
-r = redis.from_url(REDIS_URL)
+# --- إعداد ---
 app = Flask(__name__)
-bitvavo = Bitvavo({ 'APIKEY': BITVAVO_API_KEY, 'APISECRET': BITVAVO_API_SECRET })
+r = redis.from_url(os.getenv("REDIS_URL"))
+bitvavo = Bitvavo({
+    'APIKEY': os.getenv("BITVAVO_API_KEY"),
+    'APISECRET': os.getenv("BITVAVO_API_SECRET"),
+    'RESTURL': 'https://api.bitvavo.com/v2',
+    'WSURL': 'wss://ws.bitvavo.com/v2/'
+})
+TOUTO_CHAT_ID = os.getenv("CHAT_ID")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# إرسال إشعار Telegram
-def send_message(text):
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": text}
-    )
+# --- إرسال إشعار لتوتو ---
+def send_to_touto(text):
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
+        "chat_id": TOUTO_CHAT_ID,
+        "text": text
+    })
 
-# جلب وتحليل العملات
-def get_top_25():
+# --- حذف كل شي ---
+def reset_memory():
+    for key in r.scan_iter("*"):
+        r.delete(key)
+
+# --- تجميع رموز السوق كل 5 د ---
+global_usdt_symbols = []
+
+def update_symbols_loop():
+    global global_usdt_symbols
+    while True:
+        try:
+            markets = bitvavo.markets()
+            global_usdt_symbols = [m['market'] for m in markets if m['quote'] == 'USDT' and m['status'] == 'trading']
+        except: pass
+        time.sleep(300)  # كل 5 دقايق
+
+# --- Ridder Score ---
+def ridder_score(symbol):
     try:
-        markets = bitvavo.markets()
-        tickers = bitvavo.ticker24h()
+        candles = bitvavo.candles(symbol, '1m', { 'limit': 3 })
+        if len(candles) < 3:
+            return 0
+        change = (float(candles[-1][4]) - float(candles[0][1])) / float(candles[0][1]) * 100
+        avg_range = sum([abs(float(c[2]) - float(c[3])) for c in candles]) / 3
+        avg_volume = sum([float(c[5]) for c in candles]) / 3
+        return change * avg_range * avg_volume
+    except:
+        return 0
 
-        active_eur = [m['market'] for m in markets if m['status'] == 'trading' and m['quote'] == 'EUR']
-        filtered = [t for t in tickers if t['market'] in active_eur]
+# --- Bottom Breakout Score ---
+def breakout_score(symbol):
+    try:
+        candles = bitvavo.candles(symbol, '1h', { 'limit': 30 })
+        if len(candles) < 30:
+            return 0
+        highs = [float(c[2]) for c in candles[:-1]]
+        volumes = [float(c[5]) for c in candles[:-1]]
+        last = candles[-1]
+        last_close = float(last[4])
+        last_volume = float(last[5])
+        max_high = max(highs)
+        avg_volume = sum(volumes) / len(volumes)
+        score = 0
+        if last_close > max_high:
+            score += 1
+        if last_volume > avg_volume * 2:
+            score += 1
+        if last_close > float(last[1]):
+            score += 1
+        return score
+    except:
+        return 0
 
-        for t in filtered:
+# --- Ridder Worker ---
+def run_ridder_mode():
+    while True:
+        scored = []
+        for s in global_usdt_symbols:
+            score = ridder_score(s)
+            if score:
+                scored.append((s, score))
+            time.sleep(0.1)
+        top25 = sorted(scored, key=lambda x: x[1], reverse=True)[:25]
+        for symbol, _ in top25:
+            key = f"ridder:{symbol}"
+            if not r.exists(key):
+                r.set(key, json.dumps({"start": time.time(), "expires": time.time() + 1800}))  # 30 دقيقة
+        check_ridder_triggers()
+        time.sleep(60)
+
+# --- Bottom Worker ---
+def run_bottom_mode():
+    while True:
+        for symbol in global_usdt_symbols:
+            score = breakout_score(symbol)
+            if score >= 3:
+                key = f"bottom:{symbol}"
+                if not r.exists(key):
+                    r.set(key, json.dumps({"start": time.time(), "expires": time.time() + 1800}))
+                    send_to_touto(f"اشتري {symbol.split('-')[0]} يا توتو  Bottom")
+            time.sleep(0.2)
+        time.sleep(60)
+
+# --- Check Ridder انفجار ---
+def check_ridder_triggers():
+    for key in r.scan_iter("ridder:*"):
+        symbol = key.decode().split(":")[1]
+        try:
+            candles = bitvavo.candles(symbol, '1m', { 'limit': 2 })
+            if len(candles) < 2:
+                continue
+            change = (float(candles[-1][4]) - float(candles[0][1])) / float(candles[0][1]) * 100
+            if change > 2.0:
+                send_to_touto(f"اشتري {symbol.split('-')[0]} يا توتو  Ridder")
+                r.delete(key)
+        except:
+            continue
+
+# --- تنظيف العملات المنتهية ---
+def cleanup_expired():
+    while True:
+        for key in r.scan_iter("*:*"):
             try:
-                t['change'] = float(t['priceChangePercentage'])
-            except:
-                t['change'] = -999
+                data = json.loads(r.get(key))
+                if time.time() > data.get("expires", 0):
+                    r.delete(key)
+            except: continue
+        time.sleep(60)
 
-        top = sorted(filtered, key=lambda x: x['change'], reverse=True)[:25]
-        r.set("top25", ','.join([t['market'] for t in top]))
-        return True
-
-    except Exception as e:
-        send_message(f"❌ فشل جلب العملات: {e}")
-        return False
-
-# مسار Webhook
+# --- رد "شو عم تعمل" ---
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.json
-    msg = data.get("message", {}).get("text", "")
+    msg = data.get("message", {}).get("text", "").lower()
     chat_id = data.get("message", {}).get("chat", {}).get("id", "")
-
-    if str(chat_id) != CHAT_ID:
-        return "unauthorized"
-
-    if msg.strip().lower() == "شو عم تعمل":
-        coins = r.get("top25")
-        if coins:
-            coins = coins.decode().split(",")
-            text = "👀 العملات تحت المراقبة:\n" + "\n".join(coins)
-        else:
-            text = "🚫 لا توجد عملات تحت المراقبة حالياً"
-        send_message(text)
-
+    if msg == "شو عم تعمل":
+        ridder = [k.decode().split(":")[1] for k in r.scan_iter("ridder:*")]
+        bottom = [k.decode().split(":")[1] for k in r.scan_iter("bottom:*")]
+        msg = "🚨 العملات تحت المراقبة (Ridder):\n"
+        msg += "\n".join(f"• {s}" for s in ridder) if ridder else "لا شي حالياً"
+        msg += "\n\n🔮 مرشحة للانفجار (Bottom):\n"
+        msg += "\n".join(f"• {s}" for s in bottom) if bottom else "لا شي حالياً"
+        send_to_touto(msg)
     return "ok"
 
-# بدء المهمة عند التشغيل
-def start_analysis():
-    r.delete("top25")
-    ok = get_top_25()
-    if ok:
-        send_message("✅ تم اختيار أعلى 25 عملة للمراقبة.")
-    else:
-        send_message("❌ فشل في تحليل العملات.")
-
-# تشغيل كل شيء
+# --- التشغيل النهائي ---
 if __name__ == "__main__":
-    Thread(target=start_analysis).start()
-    app.run(host="0.0.0.0", port=8080)
+    reset_memory()
+    threading.Thread(target=update_symbols_loop).start()
+    threading.Thread(target=run_ridder_mode).start()
+    threading.Thread(target=run_bottom_mode).start()
+    threading.Thread(target=cleanup_expired).start()
+    app.run(host="0.0.0.0", port=3000)
