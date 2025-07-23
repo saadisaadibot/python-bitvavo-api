@@ -159,4 +159,4 @@ if __name__ == "__main__":
     threading.Thread(target=run_ridder_mode).start()
     threading.Thread(target=run_bottom_mode).start()
     threading.Thread(target=cleanup_expired).start()
-    app.run(host="0.0.0.0", port=3000)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 3000)))
