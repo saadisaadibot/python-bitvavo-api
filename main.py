@@ -5,43 +5,25 @@ import redis
 import threading
 import requests
 from flask import Flask, request
-from python_bitvavo_api.bitvavo import Bitvavo  # حسب مجلدك
+from python_bitvavo_api.bitvavo import Bitvavo
 
-# --- إعداد ---
 app = Flask(__name__)
 r = redis.from_url(os.getenv("REDIS_URL"))
+
 bitvavo = Bitvavo({
     'APIKEY': os.getenv("BITVAVO_API_KEY"),
     'APISECRET': os.getenv("BITVAVO_API_SECRET"),
     'RESTURL': 'https://api.bitvavo.com/v2',
     'WSURL': 'wss://ws.bitvavo.com/v2/'
 })
-TOUTO_CHAT_ID = os.getenv("CHAT_ID")
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+TOUTO_CHAT_ID = os.getenv("CHAT_ID")
 
-def send_to_touto(text):
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
-        "chat_id": TOUTO_CHAT_ID,
-        "text": text
-    })
+def debug(msg):
+    print(f"[DEBUG] {msg}")
 
-def reset_memory():
-    for key in r.scan_iter("*"):
-        r.delete(key)
-
-# --- جمع السوق الأوروبي كل 5 د ---
-global_eur_symbols = []
-
-def update_symbols_loop():
-    global global_eur_symbols
-    while True:
-        try:
-            markets = bitvavo.markets()
-            global_eur_symbols = [m['market'] for m in markets if m['quote'] == 'EUR' and m['status'] == 'trading']
-        except: pass
-        time.sleep(300)
-
-# --- سكور Ridder ---
+# ========== Ridder Scoring ==========
 def ridder_score(symbol):
     try:
         candles = bitvavo.candles(symbol, '1m', { 'limit': 3 })
@@ -54,7 +36,7 @@ def ridder_score(symbol):
     except:
         return 0
 
-# --- سكور Breakout ---
+# ========== Breakout Scoring ==========
 def breakout_score(symbol):
     try:
         candles = bitvavo.candles(symbol, '1h', { 'limit': 30 })
@@ -75,50 +57,81 @@ def breakout_score(symbol):
     except:
         return 0
 
-# --- Ridder Mode ---
-def run_ridder_mode():
+# ========== Ridder Mode ==========
+def run_ridder_loop():
     while True:
-        scored = []
-        for s in global_eur_symbols:
-            score = ridder_score(s)
-            if score:
-                scored.append((s, score))
-            time.sleep(0.1)
-        top25 = sorted(scored, key=lambda x: x[1], reverse=True)[:25]
-        for symbol, _ in top25:
-            key = f"ridder:{symbol}"
-            if not r.exists(key):
-                r.set(key, json.dumps({"start": time.time(), "expires": time.time() + 1800}))
-        check_ridder_triggers()
-        time.sleep(60)
-
-# --- Bottom Mode ---
-def run_bottom_mode():
-    while True:
-        for symbol in global_eur_symbols:
-            score = breakout_score(symbol)
-            if score >= 3:
-                key = f"bottom:{symbol}"
-                if not r.exists(key):
-                    r.set(key, json.dumps({"start": time.time(), "expires": time.time() + 1800}))
-                    send_to_touto(f"اشتري {symbol.split('-')[0]} يا توتو  Bottom")
-            time.sleep(0.2)
-        time.sleep(60)
-
-def check_ridder_triggers():
-    for key in r.scan_iter("ridder:*"):
-        symbol = key.decode().split(":")[1]
         try:
-            candles = bitvavo.candles(symbol, '1m', { 'limit': 2 })
-            if len(candles) < 2:
-                continue
-            change = (float(candles[-1][4]) - float(candles[0][1])) / float(candles[0][1]) * 100
-            if change > 2.0:
-                send_to_touto(f"اشتري {symbol.split('-')[0]} يا توتو  Ridder")
-                r.delete(key)
-        except:
-            continue
+            markets = bitvavo.markets()
+            symbols = [m['market'] for m in markets if m['quote'] == 'EUR' and m['status'] == 'trading']
+            scored = []
+            for s in symbols:
+                score = ridder_score(s)
+                if score:
+                    scored.append((s, score))
+                time.sleep(0.12)
+            top25 = sorted(scored, key=lambda x: x[1], reverse=True)[:30]
 
+            # تنظيف السابق
+            for key in r.scan_iter("ridder:*"):
+                r.delete(key)
+
+            for symbol, _ in top25:
+                r.set(f"ridder:{symbol}", json.dumps({
+                    "start": time.time(),
+                    "expires": time.time() + 1800,
+                    "notified": False
+                }))
+        except Exception as e:
+            debug(f"خطأ في جمع Ridder: {e}")
+
+        time.sleep(1800)  # كل 30 دقيقة
+
+# ========== Ridder Trigger Check ==========
+def check_ridder_triggers():
+    while True:
+        for key in r.scan_iter("ridder:*"):
+            symbol = key.decode().split(":")[1]
+            try:
+                data = json.loads(r.get(key))
+                if data.get("notified"):
+                    continue
+                candles = bitvavo.candles(symbol, '1m', { 'limit': 2 })
+                if len(candles) < 2:
+                    continue
+                open_ = float(candles[0][1])
+                close = float(candles[-1][4])
+                volume = float(candles[-1][5])
+                change = (close - open_) / open_ * 100
+                if change > 2.0 and close > open_ and volume > 0:
+                    debug(f"🚨 Ridder Trigger: {symbol} ✅ (change={change:.2f}%)")
+                    data["notified"] = True
+                    r.set(key, json.dumps(data))
+            except Exception as e:
+                debug(f"خطأ في Ridder Trigger {symbol}: {e}")
+        time.sleep(20)
+
+# ========== Bottom Mode ==========
+def run_bottom_loop():
+    while True:
+        try:
+            markets = bitvavo.markets()
+            symbols = [m['market'] for m in markets if m['quote'] == 'EUR' and m['status'] == 'trading']
+            for symbol in symbols:
+                score = breakout_score(symbol)
+                if score >= 3:
+                    key = f"bottom:{symbol}"
+                    if not r.exists(key):
+                        r.set(key, json.dumps({
+                            "start": time.time(),
+                            "expires": time.time() + 1800
+                        }))
+                        debug(f"🔮 Bottom Signal: {symbol}")
+                time.sleep(0.3)
+        except Exception as e:
+            debug(f"Bottom Error: {e}")
+        time.sleep(60)
+
+# ========== تنظيف العملات المنتهية ==========
 def cleanup_expired():
     while True:
         for key in r.scan_iter("*:*"):
@@ -129,25 +142,31 @@ def cleanup_expired():
             except: continue
         time.sleep(60)
 
+# ========== Webhook تيليغرام ==========
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.json
     msg = data.get("message", {}).get("text", "").lower()
-    chat_id = data.get("message", {}).get("chat", {}).get("id", "")
-    if msg == "شو عم تعمل":
+    chat_id = str(data.get("message", {}).get("chat", {}).get("id", ""))
+    if msg == "شو عم تعمل" and chat_id == str(TOUTO_CHAT_ID):
         ridder = [k.decode().split(":")[1] for k in r.scan_iter("ridder:*")]
         bottom = [k.decode().split(":")[1] for k in r.scan_iter("bottom:*")]
-        msg = "🚨 العملات تحت المراقبة (Ridder):\n"
-        msg += "\n".join(f"• {s}" for s in ridder) if ridder else "لا شي حالياً"
-        msg += "\n\n🔮 مرشحة للانفجار (Bottom):\n"
-        msg += "\n".join(f"• {s}" for s in bottom) if bottom else "لا شي حالياً"
-        send_to_touto(msg)
+        reply = "🚨 العملات تحت المراقبة (Ridder):\n"
+        reply += "\n".join(f"• {s}" for s in ridder) if ridder else "لا شي حالياً"
+        reply += "\n\n🔮 مرشحة للانفجار (Bottom):\n"
+        reply += "\n".join(f"• {s}" for s in bottom) if bottom else "لا شي حالياً"
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
+            "chat_id": chat_id,
+            "text": reply
+        })
     return "ok"
 
+# ========== التشغيل ==========
 if __name__ == "__main__":
-    reset_memory()
-    threading.Thread(target=update_symbols_loop).start()
-    threading.Thread(target=run_ridder_mode).start()
-    threading.Thread(target=run_bottom_mode).start()
+    for key in r.scan_iter("*"):
+        r.delete(key)
+    threading.Thread(target=run_ridder_loop).start()
+    threading.Thread(target=check_ridder_triggers).start()
+    threading.Thread(target=run_bottom_loop).start()
     threading.Thread(target=cleanup_expired).start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 3000)))
