@@ -1,24 +1,29 @@
 import os
+from bitvavo import Bitvavo
 import requests
-from flask import Flask, request
 
-app = Flask(__name__)
-
+# Telegram إعدادات
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-@app.route("/", methods=["GET"])
-def home():
-    return "Toto Test Bot is running 🎯", 200
+def send_telegram(text):
+    try:
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": text})
+    except Exception as e:
+        print("Telegram error:", e)
 
-@app.route("/ping", methods=["GET"])
-def ping():
-    send_message("✅ البوت شغال من Railway!")
-    return "Message sent!", 200
+# Bitvavo إعداد الاتصال
+bitvavo = Bitvavo({
+    'APIKEY': os.getenv("BITVAVO_API_KEY"),
+    'APISECRET': os.getenv("BITVAVO_API_SECRET")
+})
 
-def send_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": text})
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+# تجربة طلب شموع لعملة BTC-EUR
+try:
+    candles = bitvavo.candles("BTC-EUR", "1m", { "limit": 5 })
+    send_telegram("✅ تم الحصول على الشموع:\n\n" + str(candles))
+    print("✅ Candles response:")
+    print(candles)
+except Exception as e:
+    send_telegram("❌ خطأ في طلب الشموع:\n" + str(e))
+    print("❌ Error:", e)
