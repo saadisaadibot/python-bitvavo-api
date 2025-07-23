@@ -66,6 +66,7 @@ def breakout_score(symbol):
 
 # ========== Ridder Mode ==========
 def run_ridder_loop():
+    time.sleep(60)  # ⏳ تأخير دقيقة قبل البدء
     while True:
         try:
             markets = bitvavo.markets()
@@ -122,27 +123,25 @@ def run_bottom_loop():
         try:
             markets = bitvavo.markets()
             symbols = [m['market'] for m in markets if m['quote'] == 'EUR' and m['status'] == 'trading']
-
+            scored = []
             for symbol in symbols:
-                if r.exists(f"bottom_ignore:{symbol}"):
-                    continue
-
                 score = breakout_score(symbol)
-
                 if score == 0:
-                    r.set(f"bottom_ignore:{symbol}", 1)
                     continue
-
-                if score >= 2:
-                    key = f"bottom:{symbol}"
-                    if not r.exists(key):
-                        r.set(key, json.dumps({
-                            "start": time.time(),
-                            "expires": time.time() + 1800,
-                            "notified": False
-                        }))
-                        debug(f"🔮 Bottom Monitoring: {symbol}")
+                scored.append((symbol, score))
                 time.sleep(0.3)
+
+            top25 = sorted(scored, key=lambda x: x[1], reverse=True)[:25]
+
+            for symbol, score in top25:
+                key = f"bottom:{symbol}"
+                if not r.exists(key):
+                    r.set(key, json.dumps({
+                        "start": time.time(),
+                        "expires": time.time() + 1800,
+                        "notified": False
+                    }))
+                    debug(f"🔮 Bottom Monitoring: {symbol}")
         except Exception as e:
             debug(f"Bottom Error: {e}")
         time.sleep(600)
@@ -193,12 +192,11 @@ def webhook():
     if msg == "شو عم تعمل" and chat_id == str(TOUTO_CHAT_ID):
         ridder = [k.decode().split(":")[1] for k in r.scan_iter("ridder:*")]
         bottom = [k.decode().split(":")[1] for k in r.scan_iter("bottom:*")]
-
         now = datetime.now()
         remaining = (30 - (now.minute % 30)) % 30
-        symbol = f"-{remaining}"
+        countdown = f"-{remaining}"
 
-        reply = f"🚨 العملات تحت المراقبة (Ridder) {symbol}:\n"
+        reply = f"🚨 العملات تحت المراقبة (Ridder) {countdown}:\n"
         reply += "\n".join(f"• {s}" for s in ridder) if ridder else "لا شي حالياً"
         reply += "\n\n🔮 مرشحة للانفجار (Bottom):\n"
         reply += "\n".join(f"• {s}" for s in bottom) if bottom else "لا شي حالياً"
