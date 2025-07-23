@@ -1,29 +1,45 @@
 import os
-from bitvavo import Bitvavo
 import requests
+from flask import Flask
+from python_bitvavo_api.bitvavo import Bitvavo
 
-# Telegram إعدادات
+# إعداد التوكن والتشات ID من متغيرات البيئة
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-def send_telegram(text):
+# إرسال رسالة تيليغرام
+def send_message(text):
     try:
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": text})
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        data = {"chat_id": CHAT_ID, "text": text}
+        response = requests.post(url, data=data)
+        print(f"Telegram Response: {response.text}")
     except Exception as e:
-        print("Telegram error:", e)
+        print("Telegram Error:", str(e))
 
-# Bitvavo إعداد الاتصال
-bitvavo = Bitvavo({
-    'APIKEY': os.getenv("BITVAVO_API_KEY"),
-    'APISECRET': os.getenv("BITVAVO_API_SECRET")
-})
+# تجربة مكتبة Bitvavo
+def test_bitvavo():
+    try:
+        bitvavo = Bitvavo({
+            'APIKEY': os.getenv("BITVAVO_API_KEY"),
+            'APISECRET': os.getenv("BITVAVO_API_SECRET"),
+            'RESTURL': 'https://api.bitvavo.com/v2'
+        })
+        markets = bitvavo.markets({})
+        print("Bitvavo Connection OK ✅")
+        send_message("✅ تم الاتصال مع Bitvavo بنجاح.")
+    except Exception as e:
+        print("Bitvavo Error:", str(e))
+        send_message(f"❌ خطأ في Bitvavo:\n{str(e)}")
 
-# تجربة طلب شموع لعملة BTC-EUR
-try:
-    candles = bitvavo.candles("BTC-EUR", "1m", { "limit": 5 })
-    send_telegram("✅ تم الحصول على الشموع:\n\n" + str(candles))
-    print("✅ Candles response:")
-    print(candles)
-except Exception as e:
-    send_telegram("❌ خطأ في طلب الشموع:\n" + str(e))
-    print("❌ Error:", e)
+# Flask App لتشغيل البوت
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot Running!"
+
+if __name__ == "__main__":
+    send_message("🚀 بوت كوكو بدأ التشغيل.")
+    test_bitvavo()
+    app.run(host="0.0.0.0", port=8080)
