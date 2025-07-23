@@ -20,12 +20,22 @@ bitvavo = Bitvavo({
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TOUTO_CHAT_ID = os.getenv("CHAT_ID")
+TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 
 def send_message(text):
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
-        "chat_id": TOUTO_CHAT_ID,
-        "text": text
-    })
+    try:
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
+            "chat_id": TOUTO_CHAT_ID,
+            "text": text
+        })
+    except:
+        pass
+
+def send_to_toto(symbol):
+    try:
+        requests.post(TOTO_WEBHOOK, json={"message": {"text": f"اشتري {symbol} يا كوكو"}})
+    except:
+        pass
 
 # ========== Ridder Scoring ==========
 def ridder_score(symbol):
@@ -93,9 +103,7 @@ def check_ridder_triggers():
             symbol = key.decode().split(":")[1]
             try:
                 data = json.loads(r.get(key))
-                if data.get("notified"):
-                    continue
-                if time.time() - data["start"] < 180:
+                if data.get("notified") or time.time() - data["start"] < 180:
                     continue
                 candles = bitvavo.candles(symbol, '1m', {'limit': 2})
                 if len(candles) < 2:
@@ -108,6 +116,7 @@ def check_ridder_triggers():
                     data["notified"] = True
                     r.set(key, json.dumps(data))
                     send_message(f"✅ Ridder اشتري {symbol} يا توتو 🚨")
+                    send_to_toto(symbol)
             except Exception as e:
                 print(f"[Ridder Trigger Error] {e}")
         time.sleep(20)
@@ -147,9 +156,7 @@ def check_bottom_triggers():
             symbol = key.decode().split(":")[1]
             try:
                 data = json.loads(r.get(key))
-                if data.get("notified"):
-                    continue
-                if time.time() - data["start"] < 180:
+                if data.get("notified") or time.time() - data["start"] < 180:
                     continue
                 candles = bitvavo.candles(symbol, '1m', {'limit': 2})
                 if len(candles) < 2:
@@ -162,6 +169,7 @@ def check_bottom_triggers():
                     data["notified"] = True
                     r.set(key, json.dumps(data))
                     send_message(f"✅ Bottom اشترِ {symbol} يا توتو 🔮")
+                    send_to_toto(symbol)
             except Exception as e:
                 print(f"[Bottom Trigger Error] {e}")
         time.sleep(20)
