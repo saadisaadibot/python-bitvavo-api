@@ -138,14 +138,39 @@ def run_bottom_loop():
                     if not r.exists(key):
                         r.set(key, json.dumps({
                             "start": time.time(),
-                            "expires": time.time() + 1800
+                            "expires": time.time() + 1800,
+                            "notified": False
                         }))
-                        debug(f"🔮 Bottom Signal: {symbol}")
-                        send_message(f"🔮 اشتري {symbol} يا توتو  Bottom ✅")
+                        debug(f"🔮 Bottom Monitoring: {symbol}")
                 time.sleep(0.3)
         except Exception as e:
             debug(f"Bottom Error: {e}")
         time.sleep(600)
+
+# ========== Bottom Trigger ==========
+def check_bottom_triggers():
+    while True:
+        for key in r.scan_iter("bottom:*"):
+            symbol = key.decode().split(":")[1]
+            try:
+                data = json.loads(r.get(key))
+                if data.get("notified"):
+                    continue
+                candles = bitvavo.candles(symbol, '1m', {'limit': 2})
+                if len(candles) < 2:
+                    continue
+                open_ = float(candles[0][1])
+                close = float(candles[-1][4])
+                volume = float(candles[-1][5])
+                change = (close - open_) / open_ * 100
+                if change > 1.5 and close > open_ and volume > 0:
+                    debug(f"✅ Bottom Trigger: {symbol} (change={change:.2f}%)")
+                    data["notified"] = True
+                    r.set(key, json.dumps(data))
+                    send_message(f"✅ Bottom اشترِ {symbol} يا توتو 🔮")
+            except Exception as e:
+                debug(f"Bottom Trigger Error {symbol}: {e}")
+        time.sleep(20)
 
 # ========== تنظيف العملات المنتهية ==========
 def cleanup_expired():
@@ -159,7 +184,7 @@ def cleanup_expired():
                 continue
         time.sleep(60)
 
-# ========== Webhook تيليغرام ==========
+# ========== Webhook ==========
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.json
@@ -187,5 +212,6 @@ if __name__ == "__main__":
     threading.Thread(target=run_ridder_loop).start()
     threading.Thread(target=check_ridder_triggers).start()
     threading.Thread(target=run_bottom_loop).start()
+    threading.Thread(target=check_bottom_triggers).start()
     threading.Thread(target=cleanup_expired).start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 3000)))
