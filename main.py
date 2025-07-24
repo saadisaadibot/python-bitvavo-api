@@ -42,7 +42,6 @@ def is_strong_uptrend(candles):
     try:
         if len(candles) < 5:
             return False
-
         prices = [float(c[4]) for c in candles]
         bodies = [abs(float(c[4]) - float(c[1])) for c in candles]
         ranges = [abs(float(c[2]) - float(c[3])) for c in candles]
@@ -107,8 +106,15 @@ def smart_filter():
                 # الجدار (انفجار صغير محتمل)
                 elif SNIPER_MODE["active"]:
                     prices = [float(c[4]) for c in candles]
-                    if prices[-1] > prices[0] * 1.005:
-                        send_message(f"👀 انفجار صغير محتمل: {symbol}")
+                    bodies = [abs(float(c[4]) - float(c[1])) for c in candles]
+                    ranges = [abs(float(c[2]) - float(c[3])) for c in candles]
+
+                    if prices[-1] > prices[0] * 1.007:
+                        bullish_count = sum(1 for c in candles if float(c[4]) > float(c[1]))
+                        body_strength = sum([b/r if r > 0 else 0 for b, r in zip(bodies, ranges)]) / len(candles)
+
+                        if bullish_count >= 3 and body_strength > 0.35:
+                            send_message(f"👀 انفجار صغير محتمل: {symbol}")
 
             except Exception as e:
                 print(f"[Smart Filter Error] {e}")
