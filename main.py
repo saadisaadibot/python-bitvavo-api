@@ -38,7 +38,7 @@ def send_to_toto(symbol, mode):
     except Exception as e:
         print(f"[Toto Webhook Error] {e}")
 
-# ========== تأكيد الاختراق ==========
+# ========== تأكيد اختراق ==========
 def confirm_breakout(symbol):
     try:
         candles = bitvavo.candles(symbol, '1m', {'limit': 3})
@@ -46,20 +46,13 @@ def confirm_breakout(symbol):
             return False
         last = candles[-1]
         open_, high, low, close, volume = map(float, last[:5])
-
-        # جسم الشمعة
         body = abs(close - open_)
         wick = high - low
         body_ratio = body / wick if wick else 0
-
-        # شروط الذكاء
         previous_highs = [float(c[2]) for c in candles[:-1]]
-        if close <= max(previous_highs):
-            return False
-        if body_ratio < 0.5:
-            return False
-        if (close - open_) / open_ < 0.003:
-            return False
+        if close <= max(previous_highs): return False
+        if body_ratio < 0.5: return False
+        if (close - open_) / open_ < 0.003: return False
         return True
     except:
         return False
@@ -77,7 +70,7 @@ def ridder_score(symbol):
     except:
         return 0
 
-# ========== Breakout Scoring ==========
+# ========== Bottom Scoring ==========
 def breakout_score(symbol):
     try:
         candles = bitvavo.candles(symbol, '1h', {'limit': 30})
