@@ -1,3 +1,5 @@
+# koko_dual_mode_with_tiger.py
+
 import os, json, time, redis, threading, requests
 from datetime import datetime
 from flask import Flask, request
@@ -16,10 +18,9 @@ bitvavo = Bitvavo({
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TOUTO_CHAT_ID = os.getenv("CHAT_ID")
 TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
-
-# حالة الجدار
 SNIPER_MODE = {"active": False}
 
+# ========== أدوات أساسية ==========
 def send_message(text):
     try:
         requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
@@ -36,12 +37,36 @@ def send_to_toto(symbol, mode):
     except Exception as e:
         print(f"[Webhook Error] {e}")
 
-# ========== Ridder Scoring ==========
+# ========== قبضة النمر ==========
+def is_strong_uptrend(candles):
+    try:
+        if len(candles) < 5:
+            return False
+
+        prices = [float(c[4]) for c in candles]
+        bodies = [abs(float(c[4]) - float(c[1])) for c in candles]
+        ranges = [abs(float(c[2]) - float(c[3])) for c in candles]
+
+        if prices[-1] < prices[0] * 1.01:
+            return False
+
+        bullish_count = sum(1 for c in candles if float(c[4]) > float(c[1]))
+        if bullish_count < 4:
+            return False
+
+        body_strength = sum([b/r if r > 0 else 0 for b, r in zip(bodies, ranges)]) / 5
+        if body_strength < 0.5:
+            return False
+
+        return True
+    except:
+        return False
+
+# ========== Ridder و Bottom Scoring ==========
 def ridder_score(symbol):
     try:
         candles = bitvavo.candles(symbol, '1m', {'limit': 3})
-        if len(candles) < 3:
-            return 0
+        if len(candles) < 3: return 0
         change = (float(candles[-1][4]) - float(candles[0][1])) / float(candles[0][1]) * 100
         avg_range = sum([abs(float(c[2]) - float(c[3])) for c in candles]) / 3
         avg_volume = sum([float(c[5]) for c in candles]) / 3
@@ -49,19 +74,17 @@ def ridder_score(symbol):
     except:
         return 0
 
-# ========== Bottom Scoring ==========
 def breakout_score(symbol):
     try:
         candles = bitvavo.candles(symbol, '3m', {'limit': 3})
-        if len(candles) < 3:
-            return 0
+        if len(candles) < 3: return 0
         change = (float(candles[-1][4]) - float(candles[0][1])) / float(candles[0][1]) * 100
         avg_volume = sum([float(c[5]) for c in candles]) / 3
         return change * avg_volume
     except:
         return 0
 
-# ========== فلتر ذكي ==========
+# ========== الفلتر الذكي ==========
 def smart_filter():
     while True:
         for key in list(r.scan_iter("ridder:*")) + list(r.scan_iter("bottom:*")):
@@ -72,24 +95,21 @@ def smart_filter():
 
                 candles = bitvavo.candles(symbol, '1m', {'limit': 5})
                 if len(candles) < 5: continue
-                prices = [float(c[4]) for c in candles]
-                volumes = [float(c[5]) for c in candles]
 
-                # شروط الإشارة المؤكدة
-                if (prices[-1] > max(prices[:-1])
-                    and prices[-1] > prices[0] * 1.01
-                    and prices[-1] > prices[2]
-                    and volumes[-1] > sum(volumes[:-1]) / 4):
-                    
+                # قبضة النمر = إشارة مؤكدة
+                if is_strong_uptrend(candles):
                     data["notified"] = True
                     r.set(key, json.dumps(data))
                     mode = "Ridder" if key.decode().startswith("ridder:") else "Bottom"
                     send_message(f"🚀 اشترِ {symbol} يا توتو {mode}")
                     send_to_toto(symbol, mode)
 
-                # Sniper Mode - انفجار خفيف
-                elif SNIPER_MODE["active"] and prices[-1] > prices[0] * 1.007:
-                    send_message(f"👀 انفجار صغير محتمل: {symbol}")
+                # الجدار (انفجار صغير محتمل)
+                elif SNIPER_MODE["active"]:
+                    prices = [float(c[4]) for c in candles]
+                    if prices[-1] > prices[0] * 1.005:
+                        send_message(f"👀 انفجار صغير محتمل: {symbol}")
+
             except Exception as e:
                 print(f"[Smart Filter Error] {e}")
         time.sleep(2)
@@ -161,7 +181,7 @@ def webhook():
 
     return "ok"
 
-# ========== تشغيل ==========
+# ========== التشغيل ==========
 if __name__ == "__main__":
     for key in r.scan_iter("*"): r.delete(key)
     threading.Thread(target=run_ridder_loop).start()
