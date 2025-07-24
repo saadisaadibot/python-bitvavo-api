@@ -61,7 +61,7 @@ def is_strong_uptrend(candles):
     except:
         return False
 
-# ========== Scoring ==========
+# ========== Ridder و Bottom Scoring ==========
 def ridder_score(symbol):
     try:
         candles = bitvavo.candles(symbol, '1m', {'limit': 3})
@@ -83,7 +83,7 @@ def breakout_score(symbol):
     except:
         return 0
 
-# ========== فلتر ذكي ==========
+# ========== الفلتر الذكي ==========
 def smart_filter():
     while True:
         for key in list(r.scan_iter("ridder:*")) + list(r.scan_iter("bottom:*")):
@@ -106,16 +106,18 @@ def smart_filter():
                     prices = [float(c[4]) for c in candles]
                     bodies = [abs(float(c[4]) - float(c[1])) for c in candles]
                     ranges = [abs(float(c[2]) - float(c[3])) for c in candles]
+
                     if prices[-1] > prices[0] * 1.007:
                         bullish_count = sum(1 for c in candles if float(c[4]) > float(c[1]))
                         body_strength = sum([b/r if r > 0 else 0 for b, r in zip(bodies, ranges)]) / len(candles)
+
                         if bullish_count >= 3 and body_strength > 0.35:
                             send_message(f"👀 انفجار صغير محتمل: {symbol}")
             except Exception as e:
                 print(f"[Smart Filter Error] {e}")
         time.sleep(2)
 
-# ========== Ridder ==========
+# ========== Ridder Loop ==========
 def run_ridder_loop():
     while True:
         try:
@@ -130,20 +132,16 @@ def run_ridder_loop():
             print(f"[Ridder Error] {e}")
         time.sleep(300)
 
-# ========== Bottom ==========
+# ========== Bottom Loop ==========
 def run_bottom_loop():
     while True:
         try:
-            # خذ قائمة العملات من Ridder لتجنبها
-            ridder_symbols = set(k.decode().split(":")[1].split("-")[0] for k in r.scan_iter("ridder:*"))
-
             markets = bitvavo.markets()
-            symbols = [m['market'] for m in markets if m['quote'] == 'EUR']
-            filtered = [s for s in symbols if s.split("-")[0] not in ridder_symbols]
+            ridder_keys = [k.decode().split(":")[1] for k in r.scan_iter("ridder:*")]
+            symbols = [m['market'] for m in markets if m['quote'] == 'EUR' and m['market'] not in ridder_keys]
 
-            scored = [(s, breakout_score(s)) for s in filtered]
+            scored = [(s, breakout_score(s)) for s in symbols]
             top = sorted(scored, key=lambda x: x[1], reverse=True)[:30]
-
             for key in r.scan_iter("bottom:*"): r.delete(key)
             for symbol, _ in top:
                 r.set(f"bottom:{symbol}", json.dumps({"start": time.time(), "notified": False}))
