@@ -84,9 +84,10 @@ def smart_filter():
                     mode = "Ridder" if key.decode().startswith("ridder:") else "Bottom"
                     send_message(f"🚀 اشترِ {symbol} يا توتو {mode}")
                     send_to_toto(symbol, mode)
+
                 # فلتر الجدار - اشارات خفيفة (إذا مفعّل)
                 elif SNIPER_MODE["active"] and prices[-1] > prices[0] * 1.005:
-                    send_message(f"👀 حركة غير مؤكدة: {symbol}")
+                    send_message(f"👀 انفجار صغير محتمل: {symbol}")
             except Exception as e:
                 print(f"[Smart Filter Error] {e}")
         time.sleep(2)
@@ -149,11 +150,11 @@ def webhook():
 
     elif msg == "افتح الجدار":
         SNIPER_MODE["active"] = True
-        send_message("🚧 تم تفعيل الجدار (Sniper Mode). ستصلك حركات غير مؤكدة الآن.")
+        send_message("✅ تم تفعيل Sniper Mode! أي حركة غير مؤكدة سيتم إرسالها لك مباشرة.")
 
     elif msg == "اغلق الجدار":
         SNIPER_MODE["active"] = False
-        send_message("✅ تم إغلاق الجدار. توقفت إشعارات الحركات غير المؤكدة.")
+        send_message("🔕 تم إغلاق Sniper Mode. توقفت إشعارات الحركات غير المؤكدة.")
 
     return "ok"
 
