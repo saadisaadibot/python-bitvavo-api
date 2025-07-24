@@ -31,12 +31,38 @@ def send_message(text):
     except:
         pass
 
-def send_to_toto(symbol):
+def send_to_toto(symbol, mode):
     try:
         base = symbol.split("-")[0]
-        requests.post(TOTO_WEBHOOK, json={"message": {"text": f"اشتري {base} يا توتو"}})
+        requests.post(TOTO_WEBHOOK, json={"message": {"text": f"اشتري {base} يا توتو {mode}"}})
     except Exception as e:
         print(f"[Toto Webhook Error] {e}")
+
+# ========== تأكيد الاختراق ==========
+def confirm_breakout(symbol):
+    try:
+        candles = bitvavo.candles(symbol, '1m', {'limit': 3})
+        if len(candles) < 3:
+            return False
+        last = candles[-1]
+        open_, high, low, close, volume = map(float, last[:5])
+
+        # جسم الشمعة
+        body = abs(close - open_)
+        wick = high - low
+        body_ratio = body / wick if wick else 0
+
+        # شروط الذكاء
+        previous_highs = [float(c[2]) for c in candles[:-1]]
+        if close <= max(previous_highs):
+            return False
+        if body_ratio < 0.5:
+            return False
+        if (close - open_) / open_ < 0.003:
+            return False
+        return True
+    except:
+        return False
 
 # ========== Ridder Scoring ==========
 def ridder_score(symbol):
@@ -114,10 +140,11 @@ def check_ridder_triggers():
                 volume = float(candles[-1][5])
                 change = (close - open_) / open_ * 100
                 if change > 2.0 and close > open_ and volume > 0:
-                    data["notified"] = True
-                    r.set(key, json.dumps(data))
-                    send_message(f"✅ Ridder اشتري {symbol} يا توتو 🚨")
-                    send_to_toto(symbol)
+                    if confirm_breakout(symbol):
+                        data["notified"] = True
+                        r.set(key, json.dumps(data))
+                        send_message(f"✅ Ridder اشترِ {symbol} يا توتو 🚨")
+                        send_to_toto(symbol, "Ridder")
             except Exception as e:
                 print(f"[Ridder Trigger Error] {e}")
         time.sleep(20)
@@ -167,10 +194,11 @@ def check_bottom_triggers():
                 volume = float(candles[-1][5])
                 change = (close - open_) / open_ * 100
                 if change > 1.5 and close > open_ and volume > 0:
-                    data["notified"] = True
-                    r.set(key, json.dumps(data))
-                    send_message(f"✅ Bottom اشترِ {symbol} يا توتو 🔮")
-                    send_to_toto(symbol)
+                    if confirm_breakout(symbol):
+                        data["notified"] = True
+                        r.set(key, json.dumps(data))
+                        send_message(f"✅ Bottom اشترِ {symbol} يا توتو 🔮")
+                        send_to_toto(symbol, "Bottom")
             except Exception as e:
                 print(f"[Bottom Trigger Error] {e}")
         time.sleep(20)
