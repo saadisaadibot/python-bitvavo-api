@@ -61,7 +61,7 @@ def is_strong_uptrend(candles):
     except:
         return False
 
-# ========== Ridder و Bottom Scoring ==========
+# ========== Scoring ==========
 def ridder_score(symbol):
     try:
         candles = bitvavo.candles(symbol, '1m', {'limit': 3})
@@ -83,7 +83,7 @@ def breakout_score(symbol):
     except:
         return 0
 
-# ========== الفلتر الذكي ==========
+# ========== فلتر ذكي ==========
 def smart_filter():
     while True:
         for key in list(r.scan_iter("ridder:*")) + list(r.scan_iter("bottom:*")):
@@ -95,7 +95,6 @@ def smart_filter():
                 candles = bitvavo.candles(symbol, '1m', {'limit': 5})
                 if len(candles) < 5: continue
 
-                # قبضة النمر = إشارة مؤكدة
                 if is_strong_uptrend(candles):
                     data["notified"] = True
                     r.set(key, json.dumps(data))
@@ -103,24 +102,20 @@ def smart_filter():
                     send_message(f"🚀 اشترِ {symbol} يا توتو {mode}")
                     send_to_toto(symbol, mode)
 
-                # الجدار (انفجار صغير محتمل)
                 elif SNIPER_MODE["active"]:
                     prices = [float(c[4]) for c in candles]
                     bodies = [abs(float(c[4]) - float(c[1])) for c in candles]
                     ranges = [abs(float(c[2]) - float(c[3])) for c in candles]
-
                     if prices[-1] > prices[0] * 1.007:
                         bullish_count = sum(1 for c in candles if float(c[4]) > float(c[1]))
                         body_strength = sum([b/r if r > 0 else 0 for b, r in zip(bodies, ranges)]) / len(candles)
-
                         if bullish_count >= 3 and body_strength > 0.35:
                             send_message(f"👀 انفجار صغير محتمل: {symbol}")
-
             except Exception as e:
                 print(f"[Smart Filter Error] {e}")
         time.sleep(2)
 
-# ========== Ridder Loop ==========
+# ========== Ridder ==========
 def run_ridder_loop():
     while True:
         try:
@@ -135,14 +130,20 @@ def run_ridder_loop():
             print(f"[Ridder Error] {e}")
         time.sleep(300)
 
-# ========== Bottom Loop ==========
+# ========== Bottom ==========
 def run_bottom_loop():
     while True:
         try:
+            # خذ قائمة العملات من Ridder لتجنبها
+            ridder_symbols = set(k.decode().split(":")[1].split("-")[0] for k in r.scan_iter("ridder:*"))
+
             markets = bitvavo.markets()
             symbols = [m['market'] for m in markets if m['quote'] == 'EUR']
-            scored = [(s, breakout_score(s)) for s in symbols]
+            filtered = [s for s in symbols if s.split("-")[0] not in ridder_symbols]
+
+            scored = [(s, breakout_score(s)) for s in filtered]
             top = sorted(scored, key=lambda x: x[1], reverse=True)[:30]
+
             for key in r.scan_iter("bottom:*"): r.delete(key)
             for symbol, _ in top:
                 r.set(f"bottom:{symbol}", json.dumps({"start": time.time(), "notified": False}))
