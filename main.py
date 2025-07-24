@@ -1,5 +1,3 @@
-# koko_dual_mode_with_filter_sniper.py
-
 import os, json, time, redis, threading, requests
 from datetime import datetime
 from flask import Flask, request
@@ -77,16 +75,20 @@ def smart_filter():
                 prices = [float(c[4]) for c in candles]
                 volumes = [float(c[5]) for c in candles]
 
-                # فلتر الاشارة المؤكدة
-                if prices[-1] > max(prices[:-1]) and prices[-1] > prices[0] * 1.01 and volumes[-1] > sum(volumes[:-1]) / 4:
+                # شروط الإشارة المؤكدة
+                if (prices[-1] > max(prices[:-1])
+                    and prices[-1] > prices[0] * 1.01
+                    and prices[-1] > prices[2]
+                    and volumes[-1] > sum(volumes[:-1]) / 4):
+                    
                     data["notified"] = True
                     r.set(key, json.dumps(data))
                     mode = "Ridder" if key.decode().startswith("ridder:") else "Bottom"
                     send_message(f"🚀 اشترِ {symbol} يا توتو {mode}")
                     send_to_toto(symbol, mode)
 
-                # فلتر الجدار - اشارات خفيفة (إذا مفعّل)
-                elif SNIPER_MODE["active"] and prices[-1] > prices[0] * 1.005:
+                # Sniper Mode - انفجار خفيف
+                elif SNIPER_MODE["active"] and prices[-1] > prices[0] * 1.007:
                     send_message(f"👀 انفجار صغير محتمل: {symbol}")
             except Exception as e:
                 print(f"[Smart Filter Error] {e}")
@@ -130,7 +132,8 @@ def cleanup_expired():
                 data = json.loads(r.get(key))
                 if time.time() - data["start"] > 300:
                     r.delete(key)
-            except: continue
+            except:
+                continue
         time.sleep(60)
 
 # ========== Telegram Webhook ==========
