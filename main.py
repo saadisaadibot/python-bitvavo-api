@@ -1,4 +1,4 @@
-# koko_dual_mode_with_filter.py
+# koko_dual_mode_with_filter_sniper.py
 
 import os, json, time, redis, threading, requests
 from datetime import datetime
@@ -18,6 +18,9 @@ bitvavo = Bitvavo({
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TOUTO_CHAT_ID = os.getenv("CHAT_ID")
 TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
+
+# حالة الجدار
+SNIPER_MODE = {"active": False}
 
 def send_message(text):
     try:
@@ -63,21 +66,27 @@ def breakout_score(symbol):
 # ========== فلتر ذكي ==========
 def smart_filter():
     while True:
-        for key in r.scan_iter("ridder:*") + r.scan_iter("bottom:*"):
+        for key in list(r.scan_iter("ridder:*")) + list(r.scan_iter("bottom:*")):
             symbol = key.decode().split(":")[1]
             try:
                 data = json.loads(r.get(key))
                 if data.get("notified"): continue
+
                 candles = bitvavo.candles(symbol, '1m', {'limit': 5})
                 if len(candles) < 5: continue
                 prices = [float(c[4]) for c in candles]
                 volumes = [float(c[5]) for c in candles]
+
+                # فلتر الاشارة المؤكدة
                 if prices[-1] > max(prices[:-1]) and prices[-1] > prices[0] * 1.01 and volumes[-1] > sum(volumes[:-1]) / 4:
                     data["notified"] = True
                     r.set(key, json.dumps(data))
                     mode = "Ridder" if key.decode().startswith("ridder:") else "Bottom"
                     send_message(f"🚀 اشترِ {symbol} يا توتو {mode}")
                     send_to_toto(symbol, mode)
+                # فلتر الجدار - اشارات خفيفة (إذا مفعّل)
+                elif SNIPER_MODE["active"] and prices[-1] > prices[0] * 1.005:
+                    send_message(f"👀 حركة غير مؤكدة: {symbol}")
             except Exception as e:
                 print(f"[Smart Filter Error] {e}")
         time.sleep(2)
@@ -90,8 +99,7 @@ def run_ridder_loop():
             symbols = [m['market'] for m in markets if m['quote'] == 'EUR']
             scored = [(s, ridder_score(s)) for s in symbols]
             top = sorted(scored, key=lambda x: x[1], reverse=True)[:30]
-            for key in r.scan_iter("ridder:*"):
-                r.delete(key)
+            for key in r.scan_iter("ridder:*"): r.delete(key)
             for symbol, _ in top:
                 r.set(f"ridder:{symbol}", json.dumps({"start": time.time(), "notified": False}))
         except Exception as e:
@@ -106,8 +114,7 @@ def run_bottom_loop():
             symbols = [m['market'] for m in markets if m['quote'] == 'EUR']
             scored = [(s, breakout_score(s)) for s in symbols]
             top = sorted(scored, key=lambda x: x[1], reverse=True)[:30]
-            for key in r.scan_iter("bottom:*"):
-                r.delete(key)
+            for key in r.scan_iter("bottom:*"): r.delete(key)
             for symbol, _ in top:
                 r.set(f"bottom:{symbol}", json.dumps({"start": time.time(), "notified": False}))
         except Exception as e:
@@ -131,15 +138,26 @@ def webhook():
     data = request.json
     msg = data.get("message", {}).get("text", "").lower()
     chat_id = str(data.get("message", {}).get("chat", {}).get("id", ""))
-    if msg == "شو عم تعمل" and chat_id == str(TOUTO_CHAT_ID):
+    if chat_id != str(TOUTO_CHAT_ID): return "ok"
+
+    if msg == "شو عم تعمل":
         ridder = [k.decode().split(":")[1] for k in r.scan_iter("ridder:*")]
         bottom = [k.decode().split(":")[1] for k in r.scan_iter("bottom:*")]
         reply = "🚨 Ridder:\n" + "\n".join(ridder) if ridder else "🚨 لا عملات في Ridder\n"
         reply += "\n\n🔮 Bottom:\n" + "\n".join(bottom) if bottom else "\n🔮 لا عملات في Bottom"
         send_message(reply)
+
+    elif msg == "افتح الجدار":
+        SNIPER_MODE["active"] = True
+        send_message("🚧 تم تفعيل الجدار (Sniper Mode). ستصلك حركات غير مؤكدة الآن.")
+
+    elif msg == "اغلق الجدار":
+        SNIPER_MODE["active"] = False
+        send_message("✅ تم إغلاق الجدار. توقفت إشعارات الحركات غير المؤكدة.")
+
     return "ok"
 
-# ========== Start ==========
+# ========== تشغيل ==========
 if __name__ == "__main__":
     for key in r.scan_iter("*"): r.delete(key)
     threading.Thread(target=run_ridder_loop).start()
