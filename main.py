@@ -15,7 +15,9 @@ bitvavo = Bitvavo({
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TOUTO_CHAT_ID = os.getenv("CHAT_ID")
 TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
+
 SNIPER_MODE = {"active": False}
+SNIPER_LAST_ALERT = {}  # NEW: Cooldown لكل عملة
 
 # ========== أدوات أساسية ==========
 def send_message(text):
@@ -34,7 +36,7 @@ def send_to_toto(symbol, mode):
     except Exception as e:
         print(f"[Webhook Error] {e}")
 
-# ========== قبضة النمر (معدلة لـ 3%) ==========
+# ========== قبضة النمر (صعود 3%) ==========
 def is_strong_uptrend(candles):
     try:
         if len(candles) < 5:
@@ -98,7 +100,11 @@ def smart_filter():
                         body_strength = sum([b/r if r > 0 else 0 for b, r in zip(bodies, ranges)]) / len(candles)
 
                         if bullish_count >= 3 and body_strength > 0.35:
-                            send_message(f"👀 انفجار صغير محتمل: {symbol}")
+                            now = time.time()
+                            last = SNIPER_LAST_ALERT.get(symbol, 0)
+                            if now - last > 180:  # تهدئة 3 دقائق
+                                SNIPER_LAST_ALERT[symbol] = now
+                                send_message(f"👀 انفجار صغير محتمل: {symbol}")
             except Exception as e:
                 print(f"[Smart Filter Error] {e}")
         time.sleep(2)
