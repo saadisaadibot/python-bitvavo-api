@@ -129,7 +129,7 @@ def run_ridder_loop():
                 r.set(f"ridder:{symbol}", json.dumps({"start": time.time(), "notified": False}))
         except Exception as e:
             print(f"[Ridder Error] {e}")
-        time.sleep(300)
+        time.sleep(90)
 
 # ========== تنظيف بعد 15 دقيقة ==========
 def cleanup_expired():
