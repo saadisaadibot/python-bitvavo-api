@@ -17,7 +17,7 @@ TOUTO_CHAT_ID = os.getenv("CHAT_ID")
 TOTO_WEBHOOK = "https://totozaghnot-production.up.railway.app/webhook"
 
 SNIPER_MODE = {"active": False}
-SNIPER_LAST_ALERT = {}  # NEW: Cooldown لكل عملة
+SNIPER_LAST_ALERT = {}
 
 # ========== أدوات أساسية ==========
 def send_message(text):
@@ -36,7 +36,7 @@ def send_to_toto(symbol, mode):
     except Exception as e:
         print(f"[Webhook Error] {e}")
 
-# ========== قبضة النمر (صعود 3%) ==========
+# ========== قبضة النمر ==========
 def is_strong_uptrend(candles):
     try:
         if len(candles) < 5:
@@ -60,14 +60,21 @@ def is_strong_uptrend(candles):
     except:
         return False
 
-# ========== Ridder Score ==========
+# ========== Ridder Score مع حجم تداول آخر ساعة ==========
 def ridder_score(symbol):
     try:
-        candles = bitvavo.candles(symbol, '1m', {'limit': 3})
+        candles = bitvavo.candles(symbol, '1m', {'limit': 60})
         if len(candles) < 3: return 0
-        change = (float(candles[-1][4]) - float(candles[0][1])) / float(candles[0][1]) * 100
-        avg_range = sum([abs(float(c[2]) - float(c[3])) for c in candles]) / 3
-        avg_volume = sum([float(c[5]) for c in candles]) / 3
+
+        total_volume = sum([float(c[5]) for c in candles])
+        if total_volume < 10000:
+            return 0
+
+        recent = candles[-3:]
+        change = (float(recent[-1][4]) - float(recent[0][1])) / float(recent[0][1]) * 100
+        avg_range = sum([abs(float(c[2]) - float(c[3])) for c in recent]) / 3
+        avg_volume = sum([float(c[5]) for c in recent]) / 3
+
         return change * avg_range * avg_volume
     except:
         return 0
@@ -102,12 +109,12 @@ def smart_filter():
                         if bullish_count >= 3 and body_strength > 0.35:
                             now = time.time()
                             last = SNIPER_LAST_ALERT.get(symbol, 0)
-                            if now - last > 180:  # تهدئة 3 دقائق
+                            if now - last > 180:
                                 SNIPER_LAST_ALERT[symbol] = now
                                 send_message(f"👀 انفجار صغير محتمل: {symbol}")
             except Exception as e:
                 print(f"[Smart Filter Error] {e}")
-        time.sleep(2)
+        time.sleep(1)  # ✅ كل ثانية
 
 # ========== Ridder Loop ==========
 def run_ridder_loop():
@@ -116,7 +123,7 @@ def run_ridder_loop():
             markets = bitvavo.markets()
             symbols = [m['market'] for m in markets if m['quote'] == 'EUR']
             scored = [(s, ridder_score(s)) for s in symbols]
-            top = sorted(scored, key=lambda x: x[1], reverse=True)[:60]
+            top = sorted(scored, key=lambda x: x[1], reverse=True)[:50]  # ✅ Top 50 فقط
             for key in r.scan_iter("ridder:*"): r.delete(key)
             for symbol, _ in top:
                 r.set(f"ridder:{symbol}", json.dumps({"start": time.time(), "notified": False}))
@@ -124,19 +131,19 @@ def run_ridder_loop():
             print(f"[Ridder Error] {e}")
         time.sleep(300)
 
-# ========== تنظيف ==========
+# ========== تنظيف بعد 15 دقيقة ==========
 def cleanup_expired():
     while True:
         for key in r.scan_iter("ridder:*"):
             try:
                 data = json.loads(r.get(key))
-                if time.time() - data["start"] > 300:
+                if time.time() - data["start"] > 900:  # ✅ 15 دقيقة
                     r.delete(key)
             except:
                 continue
         time.sleep(60)
 
-# ========== Telegram Webhook ==========
+# ========== Webhook تلغرام ==========
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.json
